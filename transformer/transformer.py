@@ -1,8 +1,9 @@
 import tensorflow as tf
 import numpy as np
+
 """
 length is same as vocab size
-depth is same as d_model
+depth is same as d_model - size of embeddig dimension
 """
 def positional_encoding(length, depth):
     depth = depth/2
@@ -23,7 +24,6 @@ def positional_encoding(length, depth):
 """
 creates the encoding vector for a sample. Think of this kinda like a learned version of PCA
 """
-    
 class PositionalEmbedding(tf.keras.layers.Layer):
     """
     vocab_size: input  (incontext of scale-16s this will be # of 16 sequences or wgs sequences)
@@ -276,6 +276,62 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
+class Translator(tf.Module):
+    def __init__(self, input_tokenizer, output_tokenizer, transformer):
+        self.input_tokenizer = input_tokenizer
+        self.output_tokenizer = output_tokenizer
+        self.transformer = transformer
+
+    def __call__(self, input_sequence, max_length=128):
+        assert isinstance(input_sequence, tf.Tensor)
+
+        if len(input_sequence.shape) == 0:
+            input_sequence = input_sequence[tf.newaxis]
+
+        encoder_input = self.input_tokenizer.tokenize(input_sequence).to_tensor()
+
+        start_end = self.output_tokenizer([''])[0] # why 0???
+        start = start_end[0][tf.newaxis]
+        end = start_end[1][tf.newaxis]
+
+        output_array = tf.TensorArray(dtype=tf.int64, size=0, dynamic_size=True)
+        output_array = output_array.write(0, start)
+
+        for i in tf.range(max_length):
+            output = tf.transpose(output_array.stack())
+            predictions = self.transformer([encoder_input, output], training=False)
+
+            predictions = predictions[:, -1:, :]
+
+            predicted_id = tf.argmax(predictions, axis=-1)
+
+            output_array = output_array.write(i+1, predicted_id[0])
+
+            if predicted_id == end:
+                break
+
+        output = tf.transpose(output_array.stack())
+
+        text = self.output_tokenizer.detokenize(output)[0]
+        tokens = self.output_tokenizer.lookup(output)[0]
+
+        self.transformer([encoder_input, output[:, :-1]], training=False)
+        attention_weights = self.transformer.decoder.last_atten_scores
+
+        return text, tokens, attention_weights
+    
+class ExportTranslator(tf.Module):
+    def __init__(self, translator):
+        self.translator = translator
+
+    @tf.function(input_signature=[tf.TensorSpec(shape=[], dtype=tf.string)])
+    def __call__(self, sentence):
+        (result,
+        tokens,
+        attention_weights) = self.translator(sentence)
+
+        return result
+    
 
 def masked_loss(label, pred):
     mask = label != 0

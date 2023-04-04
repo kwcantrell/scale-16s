@@ -3,7 +3,7 @@ import tensorflow_datasets as tfds
 import tensorflow as tf
 
 import tensorflow_text
-from transformer import Transformer, CustomSchedule
+from transformer import Transformer, CustomSchedule, Translator, ExportTranslator
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -13,111 +13,121 @@ examples, metadata = tfds.load('ted_hrlr_translate/pt_to_en',
 
 train_examples, val_examples = examples['train'], examples['validation']
 
-#   print('> Examples in Portuguese:')
-with open('examples.txt', 'w') as f:
-    for pt_examples, en_examples in train_examples.batch(10000).take(1):
-        for pt in en_examples.numpy():
-            f.write(pt.decode('utf-8'))
-            f.write('\n\n')
-#   print()
+# with open('examples.txt', 'w') as f:
+for pt_examples, en_examples in train_examples.batch(3).take(1):
+    print('> Examples in Portuguese:')
+    for pt in pt_examples.numpy():
+        print(pt.decode('utf-8'))
+    print()
 
-#   print('> Examples in English:')
-#   for en in en_examples.numpy():
-#     print(en.decode('utf-8'))
+    print('> Examples in English:')
+    for en in en_examples.numpy():
+        print(en.decode('utf-8'))
 
-# model_name = 'ted_hrlr_translate_pt_en_converter'
-# tf.keras.utils.get_file(
-#     f'{model_name}.zip',
-#     f'https://storage.googleapis.com/download.tensorflow.org/models/{model_name}.zip',
-#     cache_dir='.', cache_subdir='', extract=True
-# )
+model_name = 'ted_hrlr_translate_pt_en_converter'
+tf.keras.utils.get_file(
+    f'{model_name}.zip',
+    f'https://storage.googleapis.com/download.tensorflow.org/models/{model_name}.zip',
+    cache_dir='.', cache_subdir='', extract=True
+)
 
-# tokenizers = tf.saved_model.load(model_name)
+tokenizers = tf.saved_model.load(model_name)#, options=tf.saved_model.LoadOptions(allow_partial_checkpoint=True, experimental_io_device='/job:localhost'))
 
-# MAX_TOKENS=128
-# def prepare_batch(pt, en):
-#     pt = tokenizers.pt.tokenize(pt)      # Output is ragged.
-#     pt = pt[:, :MAX_TOKENS]    # Trim to MAX_TOKENS.
-#     pt = pt.to_tensor()  # Convert to 0-padded dense Tensor
+MAX_TOKENS=128
+def prepare_batch(pt, en):
+    pt = tokenizers.pt.tokenize(pt)      # Output is ragged.
+    pt = pt[:, :MAX_TOKENS]    # Trim to MAX_TOKENS.
+    pt = pt.to_tensor()  # Convert to 0-padded dense Tensor
 
-#     en = tokenizers.en.tokenize(en)
-#     en = en[:, :(MAX_TOKENS+1)]
-#     en_inputs = en[:, :-1].to_tensor()  # Drop the [END] tokens
-#     en_labels = en[:, 1:].to_tensor()   # Drop the [START] tokens
+    en = tokenizers.en.tokenize(en)
+    en = en[:, :(MAX_TOKENS+1)]
+    en_inputs = en[:, :-1].to_tensor()  # Drop the [END] tokens
+    en_labels = en[:, 1:].to_tensor()   # Drop the [START] tokens
 
-#     return (pt, en_inputs), en_labels
+    return (pt, en_inputs), en_labels
 
-# BUFFER_SIZE = 20000
-# BATCH_SIZE = 64
+BUFFER_SIZE = 20000
+BATCH_SIZE = 64
 
-# def make_batches(ds):
-#     return (
-#         ds
-#         .shuffle(BUFFER_SIZE)
-#         .batch(BATCH_SIZE)
-#         .map(prepare_batch, tf.data.AUTOTUNE)
-#         .prefetch(buffer_size=tf.data.AUTOTUNE))
+def make_batches(ds):
+    return (
+        ds
+        .shuffle(BUFFER_SIZE)
+        .batch(BATCH_SIZE)
+        .map(prepare_batch, tf.data.AUTOTUNE)
+        .prefetch(buffer_size=tf.data.AUTOTUNE))
 
-# # Create training and validation set batches.
-# train_batches = make_batches(train_examples)
-# val_batches = make_batches(val_examples)
+# Create training and validation set batches.
+train_batches = make_batches(train_examples)
+val_batches = make_batches(val_examples)
 
+for (pt, en), en_labels in train_batches.take(1):
+  break
 
-# # hyperparams
-# num_layers = 4
-# d_model = 128
-# dff = 512
-# num_heads = 8
-# dropout_rate = 0.1
+print(pt.shape)
+print(en.shape)
+print(en_labels.shape)
 
-# transformer = Transformer(
-#     num_layers=num_layers,
-#     d_model=d_model,
-#     num_heads=num_heads,
-#     dff=dff,
-#     input_vocab_size=tokenizers.pt.get_vocab_size().numpy(),
-#     target_vocab_size=tokenizers.en.get_vocab_size().numpy(),
-#     dropout_rate=dropout_rate)
+# hyperparams
+num_layers = 4
+d_model = 128
+dff = 512
+num_heads = 8
+dropout_rate = 0.1
 
-# output = transformer((pt, en))
-# print(tokenizers.pt.get_vocab_size().numpy())
-# learning_rate = CustomSchedule(d_model)
+transformer = Transformer(
+    num_layers=num_layers,
+    d_model=d_model,
+    num_heads=num_heads,
+    dff=dff,
+    input_vocab_size=tokenizers.pt.get_vocab_size().numpy(),
+    target_vocab_size=tokenizers.en.get_vocab_size().numpy(),
+    dropout_rate=dropout_rate)
 
-# optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
-#                                      epsilon=1e-9)
+output = transformer((pt, en))
+print(tokenizers.pt.get_vocab_size().numpy())
+learning_rate = CustomSchedule(d_model)
 
-# def masked_loss(label, pred):
-#     mask = label != 0
-#     loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
-#         from_logits=True, reduction='none')
-#     loss = loss_object(label, pred)
+optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
+                                     epsilon=1e-9)
 
-#     mask = tf.cast(mask, dtype=loss.dtype)
-#     loss *= mask
+def masked_loss(label, pred):
+    mask = label != 0
+    loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
+        from_logits=True, reduction='none')
+    loss = loss_object(label, pred)
 
-#     loss = tf.reduce_sum(loss)/tf.reduce_sum(mask)
-#     return loss
+    mask = tf.cast(mask, dtype=loss.dtype)
+    loss *= mask
 
-
-# def masked_accuracy(label, pred):
-#     pred = tf.argmax(pred, axis=2)
-#     label = tf.cast(label, pred.dtype)
-#     match = label == pred
-
-#     mask = label != 0
-
-#     match = match & mask
-
-#     match = tf.cast(match, dtype=tf.float32)
-#     mask = tf.cast(mask, dtype=tf.float32)
-#     return tf.reduce_sum(match)/tf.reduce_sum(mask)
-
-# transformer.compile(
-#     loss=masked_loss,
-#     optimizer=optimizer,
-#     metrics=[masked_accuracy])
+    loss = tf.reduce_sum(loss)/tf.reduce_sum(mask)
+    return loss
 
 
-# transformer.fit(train_batches,
-#                 epochs=20,
-#                 validation_data=val_batches)
+def masked_accuracy(label, pred):
+    pred = tf.argmax(pred, axis=2)
+    label = tf.cast(label, pred.dtype)
+    match = label == pred
+
+    mask = label != 0
+
+    match = match & mask
+
+    match = tf.cast(match, dtype=tf.float32)
+    mask = tf.cast(mask, dtype=tf.float32)
+    return tf.reduce_sum(match)/tf.reduce_sum(mask)
+
+transformer.compile(
+    loss=masked_loss,
+    optimizer=optimizer,
+    metrics=[masked_accuracy])
+
+
+transformer.fit(train_batches,
+                epochs=1,
+                validation_data=val_batches)
+
+translator = Translator(tokenizers.pt, tokenizers.en, transformer)
+translator = ExportTranslator(translator)
+print(translator('este é o primeiro livro que eu fiz.').numpy())
+tf.saved_model.save(translator, export_dir='translator')
