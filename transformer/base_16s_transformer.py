@@ -7,47 +7,83 @@ from tensorflow import keras
 from keras.layers import MultiHeadAttention, LayerNormalization, Dropout, Layer
 from keras.layers import Embedding, Input, GlobalAveragePooling1D, Dense
 from keras.models import Sequential, Model
-# import warnings
-# warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 
-# modle encoder transformer and append feature counts and feed into linear layer.
 
-REL_PATH='samples'
+# Save table #
+table_path = 'dataset/training/data/16s-full-train.biom'
+table = load_table(table_path)
+vocab = table.shape[0]
+MAX_OBS_PER_SAMPLE=int(np.max(table.pa(inplace=False).sum(axis='sample')))
+BATCH_SIZE=32
+def process_input(line):
+    defs = [tf.constant([], dtype=tf.int32), tf.constant([], dtype=tf.string), tf.constant([], dtype=tf.string), tf.constant([], dtype=tf.float32)]
+    fields = tf.io.decode_csv(line, record_defaults=defs, field_delim='\t')
 
-# step 1 get human 16s samples
-table_16s = load_table('%s/16s.biom' % REL_PATH)
-df_16s = pd.read_csv('%s/16s-metadata.txt' % REL_PATH, sep='\t', index_col=0)
-df_human = df_16s.loc[(df_16s.env_package.str.contains('human') & ~(df_16s.env_package.str.contains('associated')))]
-human_sample_ids = df_human.index
-table_human_16s = table_16s.filter(human_sample_ids)
-table_human_16s.remove_empty(axis='observation', inplace=True)
-num_cat = len(df_human.env_package.unique())
-# step 2 create training data
-max_obs = np.max(table_human_16s.pa(inplace=False).sum(axis='sample'))
-# create an of rarefy table
-seq_to_num = {o_id:i for i, o_id  in enumerate(table_human_16s.ids(axis='observation'))}
-num_seq = len(seq_to_num)
+    defs = [tf.constant([], dtype=tf.int32)]*MAX_OBS_PER_SAMPLE
+    obs = tf.io.decode_csv(fields[1], record_defaults=defs, field_delim=",") 
+    counts = tf.io.decode_csv(fields[2], record_defaults=defs, field_delim=",")
+    sample_depth = tf.reduce_sum(counts, 0, keepdims=True)
+    counts = tf.math.divide(counts, sample_depth)
+    dist = fields[-1:]
+
+    return (tf.stack(obs),tf.stack(counts)), tf.stack(dist)
+
+def csv_reader_dataset(file_path):
+    ds = tf.data.Dataset.list_files(file_path, shuffle=False).shuffle(16).repeat().interleave(
+        lambda file_path: tf.data.TextLineDataset(file_path), cycle_length=1)
+    ds = ds.shuffle(10000)
+    ds = ds.map(process_input)
+    ds = ds.batch(BATCH_SIZE)
+    return ds.prefetch(1000)
+
+ds = csv_reader_dataset('dataset/training/input/*')
+v_ds = csv_reader_dataset('dataset/training/input/*')
+# for x in ds.take(32):
+#     # process_input(file)
+#     # print(ds.map(process_input(line)))
+#     print(x)
+
 
 
 # step 3 create model
-embed_dim=8
+embed_dim=128
 num_heads=5
-ff_dim=8
+num_layers=4
+ff_dim=256
+max_obs=MAX_OBS_PER_SAMPLE
 
-inputs = Input(shape=(max_obs,))
-embedding_layer = TokenEmbedding(max_obs, num_seq, embed_dim)
-x = embedding_layer(inputs)
-transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
-x = transformer_block(x)
-x = GlobalAveragePooling1D()(x)
-x = Dropout(0.1)(x)
-x = Dense(20, activation="relu")(x)
-x = Dropout(0.1)(x)
-outputs = Dense(2, activation="softmax")(x)
+def build_model(mask_zero=False):
+  input_obs = Input(shape=(max_obs), batch_size=BATCH_SIZE)
+  input_counts = Input(shape=(max_obs), batch_size=BATCH_SIZE)
+  
+  embedding_layer = TokenEmbedding(vocab, embed_dim, mask_zero=mask_zero)
+  x_obs = embedding_layer(input_obs)
+  transformer_blocks = [TransformerBlock(embed_dim, num_heads, ff_dim) 
+                        for _ in range(num_layers)]
+  for i in range(num_layers):
+    x_obs = transformer_blocks[i](x_obs)
+  x_obs = tf.reshape(x_obs, [x_obs.shape[0], -1])
+  x_obs = tf.keras.layers.Concatenate(axis=1)([x_obs, input_counts])
+  x_obs = Dense(max_obs, activation="relu")(x_obs)
+  x_obs = Dense(max_obs/2, activation="relu")(x_obs)
+  outputs = Dense(1)(x_obs)
+  model = Model(inputs=(input_obs, input_counts), outputs=outputs)
 
-model = Model(inputs=inputs, outputs=outputs)
+  learning_rate = tf.keras.optimizers.schedules.CosineDecayRestarts(0.001, 1000, alpha=0.00001, m_mul=0.5)
+  optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.999,
+                                      epsilon=1e-8)
+  model.compile(loss="mse", optimizer=optimizer)
 
+  return model
 
-# print(table_human_16s.shape)
-# print(df_16s.loc[(df_16s.env_package.str.contains('human') & ~(df_16s.env_package.str.contains('associated')))].groupby('sample_type').count())
-# sample_ids = wgs_df.loc[wgs_df['env_package'] == 'human-gut'].index
+model = build_model(mask_zero=True)
+cp_callback = tf.keras.callbacks.ModelCheckpoint('dataset/checkpoint/cp.ckpt',
+                                                save_weights_only=True,
+                                                verbose=1)
+model.fit(ds,steps_per_epoch=1000, epochs=5, validation_steps=75,callbacks=[cp_callback])
+# model.load_weights('dataset/checkpoint/cp.ckpt')
+# print(model.predict(v_ds , steps=1))
+for x, y in ds.take(1):
+  pred_y = model.call(x, training=False)
+  print(y, pred_y)
+  # print(y)

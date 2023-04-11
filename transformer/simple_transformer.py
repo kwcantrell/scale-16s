@@ -21,19 +21,30 @@ class TransformerBlock(Layer):
         self.dropout1 = Dropout(rate)
         self.dropout2 = Dropout(rate)
 
-    def call(self, inputs, training):
-        attn_output = self.att(inputs, inputs)
+    def call(self, inputs, training, mask=None):
+        if mask is not None:
+            mask = mask[:, tf.newaxis, :]
+        attn_output = self.att(inputs, inputs, attention_mask=mask)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(inputs + attn_output)
         ffn_output = self.ffn(out1)
         ffn_output = self.dropout2(ffn_output, training=training)
         return self.layernorm2(out1 + ffn_output)
+
+
     
 class TokenEmbedding(Layer):
-    def __init__(self, vocab_size, embed_dim):
+    def __init__(self, vocab_size, embed_dim, mask_zero=False):
         super(TokenEmbedding, self).__init__()
-        self.token_emb = Embedding(input_dim=vocab_size, output_dim=embed_dim)
+        self.token_emb = Embedding(input_dim=vocab_size, output_dim=embed_dim, mask_zero=mask_zero)
+        self.mask_zero = mask_zero
 
     def call(self, x):
         x = self.token_emb(x)
         return x
+
+    def compute_mask(self, x, mask=None):
+        if not self.mask_zero:
+            return None
+        return self.token_emb.compute_mask(x)
+            
