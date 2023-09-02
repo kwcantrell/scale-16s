@@ -41,10 +41,16 @@ class TransformerBlock(Layer):
         return self.layernorm2(out1 + ffn_output)
 
 "reduces by 2"
+#(batch size, number of sentinels, number of observations)
+#input_dim = (#num of sentinels)
 class FunnelTransformerBlock(Layer):
-    def __init__(self, d_model, d_k, num_heads, ff_dim, rate=0.1):
+    def __init__(self, d_model, d_k, num_heads, ff_dim, input_dim, rate=0.1, reduce=True):
         super(FunnelTransformerBlock, self).__init__()
-        self.pool = AveragePooling1D(pool_size=2, strides=2)
+        #self.pool = AveragePooling1D(pool_size=2, strides=2)
+        if reduce == True:
+            self.first_map = Dense(input_dim//2)
+        elif reduce == False:
+            self.first_map = Dense(input_dim[1]*2)
         # outputs tensor of shape (max_obs,d_model)
         # key_dim determines size of W_q, W_k, and W_v to be (d_model, key_dim)
         # in "attention is all you need" key_dim was set to d_model/num_heads
@@ -64,7 +70,10 @@ class FunnelTransformerBlock(Layer):
     def call(self, inputs, training, mask=None):
         if mask is not None:
             mask = mask[:, tf.newaxis, :]
-        query = self.pool(inputs)
+        #query = self.pool(inputs)
+        query = tf.transpose(inputs, perm=[0,2,1])
+        query = self.first_map(query)
+        query = tf.transpose(query, perm=[0,2,1])
         attn_output = self.att(query, inputs, attention_mask=mask)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(query + attn_output)

@@ -3,7 +3,7 @@ import json
 import gzip
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
+#import tensorflow_addons as tfa
 from simple_transformer import TransformerBlock, FunnelTransformerBlock, ReduceMeanNorm, TokenEmbedding
 from project_embedding import project_embbeddings
 from tensorflow import keras
@@ -11,10 +11,10 @@ from keras.layers import MultiHeadAttention, LayerNormalization, Dropout, Layer
 from keras.layers import Embedding, Input, GlobalAveragePooling1D, Dense, Flatten
 from keras.models import Sequential, Model
 import random
-import psutil
+#import psutil
 
-devices = tf.config.experimental.list_physical_devices('GPU')
-tf.config.experimental.set_memory_growth(devices[0], True)
+#devices = tf.config.experimental.list_physical_devices('GPU')
+#tf.config.experimental.set_memory_growth(devices[0], True)
 
 class DataLoader(tf.keras.utils.Sequence):
     def __init__(self, data, batch_size, items_per_class, max_len):
@@ -124,15 +124,24 @@ dataset = tf.data.Dataset.from_generator(
 # #     write_steps_per_second=True,
 # #     profile_batch="1,20")
 
+#Encoder
+num_sent = 128
 model = tf.keras.Sequential()
-model.add(TokenEmbedding(vocab_size, d_model, mask_zero=mask_zero))
+#model.add(TokenEmbedding(vocab_size, d_model, mask_zero=mask_zero))
 model.add(TransformerBlock(d_model, d_key, num_heads, ff_dim))
-model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim))
-model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim))
-model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim))
-model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim))
-model.add(ReduceMeanNorm())
-model.add(tf.keras.layers.Flatten())
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent, reduce=True))
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent//2, reduce=True))
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent//4, reduce=True))
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent//8, reduce=True))
+# model.add(ReduceMeanNorm()) use when encoder is trained seperately.
+# model.add(tf.keras.layers.Flatten()) but remove when using decoder. useful for triplet loss
+
+#Decoder
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent, reduce=False))
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent*2, reduce=False))
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent*4, reduce=False))
+model.add(FunnelTransformerBlock(d_model, d_key, num_heads, ff_dim, num_sent*8, reduce=False))
+model.add(TransformerBlock(d_model, d_key, num_heads, ff_dim))
 
 
 ## initialize model ##
