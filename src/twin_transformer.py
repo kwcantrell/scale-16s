@@ -3,7 +3,7 @@ import json
 import gzip
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 from simple_transformer import TransformerBlock, FunnelTransformerBlock, ReduceMeanNorm, TokenEmbedding
 from project_embedding import project_embbeddings
 from tensorflow import keras
@@ -135,10 +135,10 @@ model.add(ReduceMeanNorm())
 model.add(tf.keras.layers.Flatten())
 
 
-## initialize model ##
-model.compile(
-    optimizer=tf.keras.optimizers.Adafactor(0.001),
-    loss=tfa.losses.TripletSemiHardLoss())
+# ## initialize model ##
+# model.compile(
+#     optimizer=tf.keras.optimizers.Adafactor(0.001),
+#     loss=tfa.losses.TripletSemiHardLoss())
 
 for c in range(cycles):
     model.fit(
