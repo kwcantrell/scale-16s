@@ -2,15 +2,15 @@ import numpy as np
 import tensorflow as tf
 from biom import load_table
 from bp import parse_newick
-from simple_transformer import QuadReduceTransformer,SentinelEmbedding, EncodingLayer, TransformerBlock, FunnelTransformerBlock, ReduceMeanNorm, CustomSchedule, TokenEmbedding
 import pandas as pd
 import json
-import os
 from losses import unifrac_loss
 from project_embedding import ProjectEncoder
 from utils import align_tables, get_tip_info, get_tip_ids
 from dataset_utils import dataset_creater, DataLoader, DataLoaderToken
+from custom_layers import TokenEmbedding, ReductionTransformer, QuadReductionTransformer, EncodingLayer, ReduceMeanNorm, CustomSchedule
 
+tf.config.run_functions_eagerly(True)
 
 def get_test_params():
     return {
@@ -146,34 +146,23 @@ def get_input_params(test_params=False, load_data_path=False, load_model=False, 
 #     model.summary()
 
 #     return model
-
-def build_encoder(params):
-    model = tf.keras.models.Sequential()
-    model.add(tf.keras.Input(shape=params['max_obs'], batch_size=params['batch_size']))
-    # model.add(tf.keras.layers.Masking(float(params['mask_value'])))
-    # model.add(SentinelEmbedding(**params))
-    model.add(TokenEmbedding(**params))
-    model.add(QuadReduceTransformer(**params))
-    model.add(EncodingLayer(name='encoding_1',**params))
-    model.add(EncodingLayer(name='encoding_2',**params))
-    model.add(EncodingLayer(name='encoding_3',**params))
-    model.add(EncodingLayer(name='encoding_4',**params))
+# @tf.function
+def build_encoder(max_obs, batch_size, total_obs,
+            num_sent, fixed_len, rate, num_heads
+    ):
+    model = tf.keras.Sequential()
+    model.add(tf.keras.Input(shape=(max_obs,), batch_size=batch_size, dtype=tf.int32))
+    model.add(TokenEmbedding(total_obs, num_sent, fixed_len))
+    model.add(QuadReductionTransformer(2, num_sent, rate))
+    model.add(ReductionTransformer(num_heads, num_sent, rate))
+    model.add(EncodingLayer(num_heads, num_sent, rate))
+    model.add(EncodingLayer(num_heads, num_sent, rate))
     model.add(ReduceMeanNorm())
-    # model.add(tf.keras.layers.Flatten())
-
-    lr = CustomSchedule(params['num_sent'])
-    optimizer = tf.keras.optimizers.Adam(lr, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
-    # optimizer = tf.keras.optimizers.Adam(beta_1=0.9, beta_2=0.98, epsilon=1e-9)
-    model.compile(
-        optimizer=optimizer,
-        loss=unifrac_loss
-    )
-    model.summary()
 
     return model
 
 if __name__ == '__main__':
-    params = get_input_params(test_params=False, load_data_path=True, load_model=True)
+    params = get_input_params(test_params=False, load_data_path=True, load_model=False)
     data = params['data']
     dataset = tf.data.Dataset.from_generator(
         data,
@@ -185,22 +174,35 @@ if __name__ == '__main__':
     )
 
     if not params['load_model']:
-        # Encoder
-        model = build_encoder(params)
-        model.fit(
-            dataset,
-            epochs=params['num_epochs'],
-            steps_per_epoch=data.__len__(),
-            callbacks=[ProjectEncoder(params)],
-        )
+    #     # Encoder
+        model = build_encoder(
+            params['max_obs'], params['batch_size'], params['total_obs'],
+            params['num_sent'], params['fixed_len'], params['rate'],
+            params['num_heads'])
+        
+        # lr = CustomSchedule(tf.cast(params['num_sent'], dtype=tf.float32))
+        # optimizer = tf.keras.optimizers.Adam(lr, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+        # # optimizer = tf.keras.optimizers.Adam(0.01, beta_1=0.9, beta_2=0.98, epsilon=1e-9)
+        # model.compile(
+        #     optimizer=optimizer,
+        #     loss=unifrac_loss,
+        # )
+        # print(model.summary())
 
-        model.save(os.path.join(params['model_path'], 'encoder.keras'))
-    else:
-        model = tf.keras.models.load_model(os.path.join(params['model_path'], 'encoder.keras'))
-        model.fit(
-            dataset,
-            epochs=params['num_epochs'],
-            steps_per_epoch=data.__len__(),
-            callbacks=[ProjectEncoder(params)],
-        )
-        model.save(os.path.join(params['model_path'], 'encoder.keras'))
+        # model.fit(
+        #     dataset,
+        #     epochs=params['num_epochs'],
+        #     steps_per_epoch=data.__len__(),
+        #     callbacks=[ProjectEncoder(params)],
+        # )
+
+    #     model.save(os.path.join(params['model_path'], 'encoder.keras'))
+    # else:
+    #     model = tf.keras.models.load_model(os.path.join(params['model_path'], 'encoder.keras'))
+    #     model.fit(
+    #         dataset,
+    #         epochs=params['num_epochs'],
+    #         steps_per_epoch=data.__len__(),
+    #         callbacks=[ProjectEncoder(params)],
+    #     )
+    #     model.save(os.path.join(params['model_path'], 'encoder.keras'))

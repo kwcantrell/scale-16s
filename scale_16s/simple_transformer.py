@@ -160,6 +160,7 @@ class QuadReduceTransformer(tf.keras.layers.Layer):
         self.blocks = []
         for _ in range(8):
             self.blocks.append(TransformerBlock(**kwargs))
+        self.supports_masking=True
     
     def call(self, inputs, training=True, mask=None):
         start = 0
@@ -272,43 +273,44 @@ class SentinelEmbedding(Layer):
         return mask[:, :self.fixed_len]
 
     
-@keras.saving.register_keras_serializable(package="Scale16s")
-class TokenEmbedding(Layer):
-    def __init__(self, **kwargs):
-        super().__init__()
-        self.total_obs = kwargs['total_obs']
-        self.max_obs = kwargs['max_obs']
-        self.num_sent = kwargs['num_sent']
-        self.fixed_len = kwargs['fixed_len']
-        self.embedding = tf.keras.layers.Embedding(
-            self.total_obs, self.num_sent, mask_zero=True,
-            input_length=self.max_obs
-        )
-        self.mask_zero=True
+# @keras.saving.register_keras_serializable(package="Scale16s")
+# class TokenEmbedding(Layer):
+#     def __init__(self, **kwargs):
+#         super().__init__()
+#         self.total_obs = kwargs['total_obs']
+#         self.max_obs = kwargs['max_obs']
+#         self.num_sent = kwargs['num_sent']
+#         self.fixed_len = kwargs['fixed_len']
+#         self.embedding = tf.keras.layers.Embedding(
+#             self.total_obs, self.num_sent, mask_zero=True,
+#             input_length=self.max_obs
+#         )
+#         self.mask_zero=True
+#         self.supports_masking=True
 
-    def compute_mask(self, x, mask=None):
-        if not self.mask_zero:
-            return None
-        return self.embedding.compute_mask(x)[:, :self.fixed_len]
+#     def compute_mask(self, x, mask=None):
+#         if not self.mask_zero:
+#             return None
+#         return self.embedding.compute_mask(x)[:, :self.fixed_len]
     
-    def call(self, x, training=False, mask=None):
-        return self.embedding(x)
+#     def call(self, x, training=False, mask=None):
+#         return self.embedding(x)
     
-    def get_config(self):
-        config = super().get_config()
-        config.update({
-            'total_obs': self.total_obs,
-            'max_obs': self.max_obs,
-            'num_sent': self.num_sent,
-            'fixed_len': self.fixed_len,
-        })
-        return config
+#     def get_config(self):
+#         config = super().get_config()
+#         config.update({
+#             'total_obs': self.total_obs,
+#             'max_obs': self.max_obs,
+#             'num_sent': self.num_sent,
+#             'fixed_len': self.fixed_len,
+#         })
+#         return config
 
 @keras.saving.register_keras_serializable(package="Scale16s")
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
   def __init__(self, d_model, warmup_steps=4000):
     super().__init__()
-    self.d_model = tf.cast(512, tf.float32)
+    self.d_model = d_model
     self.warmup_steps = warmup_steps
 
   def __call__(self, step):
@@ -318,13 +320,6 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
     return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
   
-  def get_config(self):
-     config = {
-        'd_model': self.d_model,
-        'warmup_steps': self.warmup_steps
-     }
-     return config
-
 @keras.saving.register_keras_serializable(package="Scale16s")
 def masked_loss(label, pred):
   mask = label != 0

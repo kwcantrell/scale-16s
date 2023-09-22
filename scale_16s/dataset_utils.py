@@ -244,7 +244,6 @@ class DataLoaderToken:
     def __init__(self, **kwargs):
         self.tables = kwargs['tables']
         self.tree = kwargs['tree']
-        print('get feature ids')
         self.feature_ids = self.tables[0].ids(axis='observation')#kwargs['feature_ids']
         self.batch_size = kwargs['batch_size']
         self.num_batches = kwargs['num_batches']
@@ -311,13 +310,6 @@ class DataLoaderToken:
         return [s_data[s_id] for s_id in samples]
 
     def on_epoch_end(self):
-        max_p = np.random.rand()
-        # if max_p < 0.9:
-        #     max_obs = 250
-        # elif max_p < 0.95:
-        #     max_obs = 1000
-        # else:
-        #     max_obs = self.max_obs
         self.epoch_table, self.epoch_samples = generate_random_table(self.feature_ids.copy(), self.samples_per_epoch,
                                                                      0, min_features=self.min_features, max_features=self.max_obs)
         self.unifrac_matrix = unweighted(self.epoch_table, self.tree)

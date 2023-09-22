@@ -3,3 +3,8 @@ samples/*
 test_model/*
 transformer/datasets/*
 transformer/tokenizers/*
+models/*
+random-emp500-tables/*
+data/*
+sent-data/*
+*.qza
